@@ -1,0 +1,8 @@
+*.o
+*.a
+*.so
+swap
+revert
+static_revert
+dynamic_revert
+tests_runner
