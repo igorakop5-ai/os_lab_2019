@@ -40,24 +40,33 @@ int main(int argc, char **argv) {
         switch (option_index) {
           case 0:
             seed = atoi(optarg);
-            // your code here
-            // error handling
+            // Добавлена проверка аргумента seed
+            if (seed <= 0) {
+              printf("seed must be a positive number\n");
+              return 1;
+            }
             break;
           case 1:
             array_size = atoi(optarg);
-            // your code here
-            // error handling
+            // Добавлена проверка аргумента array_size 
+            if (array_size <= 0) {
+              printf("array_size must be a positive number\n");
+              return 1;
+            }
             break;
           case 2:
             pnum = atoi(optarg);
-            // your code here
-            // error handling
+            // Добавлена проверка аргумента pnum 
+            if (pnum <= 0) {
+              printf("pnum must be a positive number\n");
+              return 1;
+            }
             break;
           case 3:
             with_files = true;
             break;
 
-          defalut:
+          default:
             printf("Index %d is out of options\n", option_index);
         }
         break;
@@ -79,7 +88,7 @@ int main(int argc, char **argv) {
   }
 
   if (seed == -1 || array_size == -1 || pnum == -1) {
-    printf("Usage: %s --seed \"num\" --array_size \"num\" --pnum \"num\" \n",
+    printf("Usage: %s --seed \"num\" --array_size \"num\" --pnum \"num\" [--by_files]\n",
            argv[0]);
     return 1;
   }
@@ -88,36 +97,79 @@ int main(int argc, char **argv) {
   GenerateArray(array, array_size, seed);
   int active_child_processes = 0;
 
+  // ДЛЯ ЗАДАНИЯ 3: Выделение памяти под массив пайпов 
+  int (*pipes)[2] = malloc(sizeof(int[2]) * pnum);
+
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
 
   for (int i = 0; i < pnum; i++) {
+    // ДЛЯ ЗАДАНИЯ 3: Создание пайпа, если не используются файлы 
+    if (!with_files) {
+      if (pipe(pipes[i]) < 0) {
+        printf("Pipe failed!\n");
+        free(array);
+        free(pipes);
+        return 1;
+      }
+    }
+
     pid_t child_pid = fork();
     if (child_pid >= 0) {
       // successful fork
       active_child_processes += 1;
       if (child_pid == 0) {
         // child process
+        
+        // Вычисление диапазона индекса для каждого процесса 
+        unsigned int begin = (array_size / pnum) * i;
+        unsigned int end = (i == pnum - 1) ? array_size : (array_size / pnum) * (i + 1);
 
-        // parallel somehow
+        // Поиск минимума и максимума в своем диапазоне
+        struct MinMax local_result = GetMinMax(array, begin, end);
 
         if (with_files) {
-          // use files here
+          // Запись результатов работы дочернего процесса в файл 
+          char file_name[50];
+          sprintf(file_name, "min_max_%d.txt", i);
+          FILE *fp = fopen(file_name, "w");
+          if (fp == NULL) {
+            printf("Error opening file for writing!\n");
+            free(array);
+            if (!with_files) free(pipes);
+            return 1;
+          }
+          fprintf(fp, "%d %d", local_result.min, local_result.max);
+          fclose(fp);
         } else {
-          // use pipe here
+          //  ДЛЯ ЗАДАНИЯ 3: Запись результатов в канал 
+          close(pipes[i][0]); // Закрываем ненужный конец чтения в дочернем процессе
+          write(pipes[i][1], &local_result.min, sizeof(local_result.min));
+          write(pipes[i][1], &local_result.max, sizeof(local_result.max));
+          close(pipes[i][1]);
         }
+
+        free(array);
+        if (!with_files) free(pipes);
         return 0;
+      } else {
+        // ДЛЯ ЗАДАНИЯ 3: Родитель закрывает ненужный конец записи 
+        if (!with_files) {
+          close(pipes[i][1]);
+        }
       }
 
     } else {
       printf("Fork failed!\n");
+      free(array);
+      free(pipes);
       return 1;
     }
   }
 
+  // Ожидание завершения всех дочерних процессов 
   while (active_child_processes > 0) {
-    // your code here
-
+    wait(NULL);
     active_child_processes -= 1;
   }
 
@@ -130,9 +182,19 @@ int main(int argc, char **argv) {
     int max = INT_MIN;
 
     if (with_files) {
-      // read from files
+      // Чтение результатов дочерних процессов из файлов в родителе 
+      char file_name[50];
+      sprintf(file_name, "min_max_%d.txt", i);
+      FILE *fp = fopen(file_name, "r");
+      if (fp != NULL) {
+        fscanf(fp, "%d %d", &min, &max);
+        fclose(fp);
+      }
     } else {
-      // read from pipes
+      // ДЛЯ ЗАДАНИЯ 3: Чтение результатов из канала 
+      read(pipes[i][0], &min, sizeof(min));
+      read(pipes[i][0], &max, sizeof(max));
+      close(pipes[i][0]);
     }
 
     if (min < min_max.min) min_max.min = min;
@@ -146,6 +208,10 @@ int main(int argc, char **argv) {
   elapsed_time += (finish_time.tv_usec - start_time.tv_usec) / 1000.0;
 
   free(array);
+  //  ДЛЯ ЗАДАНИЯ 3: Освобождение памяти массива пайпов 
+  if (!with_files) {
+    free(pipes);
+  }
 
   printf("Min: %d\n", min_max.min);
   printf("Max: %d\n", min_max.max);
